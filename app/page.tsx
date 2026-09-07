@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { signOut } from 'next-auth/react';
 
 type Medication = {
   id: string;
@@ -293,6 +294,10 @@ export default function App() {
       setLoadError(null);
       try {
         const res = await fetch('/api/tracker');
+        if (res.status === 401) {
+          window.location.href = '/login';
+          return;
+        }
         if (!res.ok) {
           throw new Error('Failed to load data');
         }
@@ -547,6 +552,14 @@ export default function App() {
 
           {/* Quick cycle status indicator */}
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => signOut({ callbackUrl: '/login' })}
+              className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200 transition cursor-pointer"
+              title="התנתקות"
+            >
+              יציאה
+            </button>
             {isLoading && (
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
                 טוען...
