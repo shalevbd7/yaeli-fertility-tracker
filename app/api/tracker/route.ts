@@ -1,14 +1,24 @@
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth-options';
 import { connectDB } from '@/lib/mongodb';
 import { Tracker } from '@/lib/models/Tracking';
 
-const USER_ID = 'yaeli-1';
+async function getTrackerUserId() {
+  const session = await getServerSession(authOptions);
+  return session?.user?.trackerUserId ?? null;
+}
 
 export async function GET() {
   try {
+    const userId = await getTrackerUserId();
+    if (!userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     await connectDB();
 
-    const data = await Tracker.findOne({ userId: USER_ID }).lean();
+    const data = await Tracker.findOne({ userId }).lean();
 
     if (!data) {
       return NextResponse.json(null);
@@ -37,12 +47,17 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const userId = await getTrackerUserId();
+    if (!userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     await connectDB();
 
     const body = await request.json();
 
     const update = {
-      userId: USER_ID,
+      userId,
       hasActiveCycle: Boolean(body.hasActiveCycle),
       cycleStartDate: body.cycleStartDate ? new Date(body.cycleStartDate) : null,
       stages: Array.isArray(body.stages) ? body.stages : [],
@@ -51,7 +66,7 @@ export async function POST(request: Request) {
     };
 
     const updated = await Tracker.findOneAndUpdate(
-      { userId: USER_ID },
+      { userId },
       { $set: update },
       { new: true, upsert: true, lean: true }
     );
