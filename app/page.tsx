@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { signOut } from 'next-auth/react';
+import { isTaskCompletedOnDate, ymdInIsrael } from '@/lib/israel-date';
 
 type Medication = {
   id: string;
@@ -42,7 +43,7 @@ type TrackerPayload = {
   cycleStartDate: string | null;
   stages: Stage[];
   medications: Medication[];
-  completedTasks: Record<string, boolean>;
+  completedTasks: Record<string, string>;
 };
 
 const LOVING_AFFIRMATIONS = [
@@ -230,7 +231,7 @@ export default function App() {
   const [toast, setToast] = useState<Toast>(null);
 
   // Checklist for today's completed tasks
-  const [completedItems, setCompletedItems] = useState<Record<string, boolean>>({});
+  const [completedItems, setCompletedItems] = useState<Record<string, string>>({});
 
   // Active random affirmation
   const [quoteIndex, setQuoteIndex] = useState(0);
@@ -376,6 +377,8 @@ export default function App() {
       isBefore: diffDays < 1
     };
   }, [hasCycle, cycleStartDate, stages]);
+
+  const todayYmdIsrael = ymdInIsrael();
 
   const resolvedStages = useMemo(() => {
     if (!cycleStartDate) return [];
@@ -797,6 +800,8 @@ export default function App() {
                               const isRelevant = med.isContinuous || (cycleMetrics.currentStage && cycleMetrics.currentStage.medicationId === med.id);
                               if (!isRelevant) return null;
 
+                              const takenToday = isTaskCompletedOnDate(completedItems, med.id, todayYmdIsrael);
+
                               return (
                                 <div
                                   key={med.id}
@@ -806,17 +811,23 @@ export default function App() {
                                     <input
                                       type="checkbox"
                                       id={`check-${med.id}`}
-                                      checked={!!completedItems[med.id]}
+                                      checked={takenToday}
                                       onChange={(e) => {
-                                        setCompletedItems({ ...completedItems, [med.id]: e.target.checked });
-                                        if (e.target.checked) showToast(`כל הכבוד יעלי! לקחת ${med.name} ❤️`);
+                                        const next = { ...completedItems };
+                                        if (e.target.checked) {
+                                          next[med.id] = todayYmdIsrael;
+                                          showToast(`כל הכבוד יעלי! לקחת ${med.name} ❤️`);
+                                        } else {
+                                          delete next[med.id];
+                                        }
+                                        setCompletedItems(next);
                                       }}
                                       className="w-5 h-5 rounded text-rose-600 focus:ring-rose-500 cursor-pointer"
                                     />
                                     <div>
                                       <label
                                         htmlFor={`check-${med.id}`}
-                                        className={`text-sm font-bold cursor-pointer ${completedItems[med.id] ? 'line-through text-slate-400' : 'text-slate-800'}`}
+                                        className={`text-sm font-bold cursor-pointer ${takenToday ? 'line-through text-slate-400' : 'text-slate-800'}`}
                                       >
                                         {med.name}
                                       </label>

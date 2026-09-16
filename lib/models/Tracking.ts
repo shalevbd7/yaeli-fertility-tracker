@@ -32,7 +32,7 @@ const UserCycleTrackerSchema = new mongoose.Schema(
     medications: [MedicationSchema],
     completedTasks: {
       type: Map,
-      of: Boolean,
+      of: String,
       default: {},
     },
   },
