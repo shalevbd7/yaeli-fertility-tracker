@@ -1,50 +1,8 @@
 import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { Tracker } from '@/lib/models/Tracking';
-import { getTrackerAccess } from '@/lib/access';
-
-/**
- * The tracker the caller may access: the owner's own tracker, or for an
- * approved partner the owner's tracker. Pending/unlinked partners get 403.
- */
-async function resolveTrackerUserId(): Promise<
-  { userId: string; error?: undefined } | { userId?: undefined; error: NextResponse }
-> {
-  const access = await getTrackerAccess();
-  if (!access) {
-    return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
-  }
-  if (!access.trackerUserId) {
-    return { error: NextResponse.json({ error: 'no-access', role: access.role }, { status: 403 }) };
-  }
-  return { userId: access.trackerUserId };
-}
-
-type TrackerLean = {
-  hasActiveCycle?: boolean;
-  cycleStartDate?: Date | null;
-  stages?: unknown[];
-  medications?: unknown[];
-  completedTasks?: unknown;
-  updatedAt?: Date | null;
-};
-
-function toResponseBody(doc: TrackerLean) {
-  const completedTasks =
-    doc.completedTasks instanceof Map
-      ? Object.fromEntries(doc.completedTasks)
-      : (doc.completedTasks ?? {});
-
-  return {
-    hasActiveCycle: doc.hasActiveCycle ?? false,
-    cycleStartDate: doc.cycleStartDate ?? null,
-    stages: doc.stages ?? [],
-    medications: doc.medications ?? [],
-    completedTasks,
-    // Version stamp: the client must send it back as `baseUpdatedAt` on save.
-    updatedAt: doc.updatedAt ?? null,
-  };
-}
+import { resolveTrackerAccess, toResponseBody, type TrackerLean } from '@/lib/tracker/server';
+import { sanitizePregnancyEditable } from '@/lib/pregnancy/sanitize';
 
 function conflict() {
   return NextResponse.json({ error: 'conflict' }, { status: 409 });
@@ -52,7 +10,7 @@ function conflict() {
 
 export async function GET() {
   try {
-    const resolved = await resolveTrackerUserId();
+    const resolved = await resolveTrackerAccess();
     if (resolved.error) return resolved.error;
     const userId = resolved.userId;
 
@@ -85,7 +43,7 @@ export async function GET() {
  */
 export async function POST(request: Request) {
   try {
-    const resolved = await resolveTrackerUserId();
+    const resolved = await resolveTrackerAccess();
     if (resolved.error) return resolved.error;
     const userId = resolved.userId;
 
@@ -115,7 +73,7 @@ export async function POST(request: Request) {
     };
 
     const existing = (await Tracker.findOne({ userId })
-      .select('updatedAt stages medications')
+      .select('updatedAt stages medications pregnancy.lmpDate')
       .lean()) as TrackerLean | null;
 
     if (!existing) {
@@ -150,6 +108,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'refusing to clear tracker' }, { status: 422 });
     }
 
+    // Pregnancy data that the owner and partner edit together. Only written when
+    // the tracker already has pregnancy data; the anchor date and the mode are
+    // owner-only and changed through /api/tracker/mode, never here.
+    const pregnancySet: Record<string, unknown> = {};
+    if (existing.pregnancy && body.pregnancy && typeof body.pregnancy === 'object') {
+      const p = sanitizePregnancyEditable(body.pregnancy);
+      pregnancySet['pregnancy.tests'] = p.tests;
+      pregnancySet['pregnancy.symptomLog'] = p.symptomLog;
+      pregnancySet['pregnancy.medications'] = p.medications;
+      pregnancySet['pregnancy.doseLog'] = p.doseLog;
+      pregnancySet['pregnancy.asNeededLog'] = p.asNeededLog;
+    }
+
     // Conditional write: only succeeds if the version is still the one we checked.
     const versionFilter =
       existingVersion === null
@@ -158,7 +129,7 @@ export async function POST(request: Request) {
 
     const updated = (await Tracker.findOneAndUpdate(
       { userId, ...versionFilter },
-      { $set: update },
+      { $set: { ...update, ...pregnancySet } },
       { new: true, lean: true }
     )) as TrackerLean | null;
 

@@ -4,23 +4,8 @@ import { Tracker } from '@/lib/models/Tracking';
 import { User } from '@/lib/models/User';
 import { isTestAccountEmail } from '@/lib/test-accounts';
 import { sendTelegramMessage } from '@/lib/telegram';
-import {
-  israelHourString,
-  shouldRemindMedication,
-  ymdInIsrael,
-} from '@/lib/israel-date';
-
-function completedTasksRecord(raw: unknown): Record<string, unknown> {
-  if (raw instanceof Map) return Object.fromEntries(raw);
-  if (raw && typeof raw === 'object') return raw as Record<string, unknown>;
-  return {};
-}
-
-function cycleStartYmd(cycleStartDate: Date | string | undefined): string | undefined {
-  if (!cycleStartDate) return undefined;
-  if (typeof cycleStartDate === 'string') return cycleStartDate.slice(0, 10);
-  return ymdInIsrael(cycleStartDate);
-}
+import { israelHourString, israelWeekday, ymdInIsrael } from '@/lib/israel-date';
+import { remindersForTracker, type CronTracker } from '@/lib/reminders';
 
 export async function GET(request: Request) {
   try {
@@ -33,9 +18,13 @@ export async function GET(request: Request) {
 
     await connectDB();
 
-    const activeTrackers = await Tracker.find({ hasActiveCycle: true }).lean();
+    // Fertility trackers with an active cycle (as before) + trackers in pregnancy mode.
+    const activeTrackers = (await Tracker.find({
+      $or: [{ hasActiveCycle: true }, { mode: 'pregnancy' }],
+    }).lean()) as unknown as CronTracker[];
     const todayYmd = ymdInIsrael();
     const currentHour = israelHourString();
+    const weekday = israelWeekday();
 
     // Trackers owned by test accounts never send (the chat belongs to the real account).
     // A tracker without a matching user record is NOT skipped, to keep the real
@@ -54,28 +43,9 @@ export async function GET(request: Request) {
     for (const tracker of activeTrackers) {
       if (testTrackerIds.has(tracker.userId)) continue;
 
-      const completedTasks = completedTasksRecord(tracker.completedTasks);
-      const cycleStart = cycleStartYmd(tracker.cycleStartDate);
+      const messages = remindersForTracker(tracker, { todayYmd, currentHour, weekday });
 
-      type CronMed = Parameters<typeof shouldRemindMedication>[0] & {
-        name: string;
-        dosage?: string;
-        notes?: string;
-      };
-      const medsToTakeNow = (tracker.medications as CronMed[]).filter((med) =>
-        shouldRemindMedication(
-          med,
-          tracker.stages,
-          cycleStart,
-          todayYmd,
-          currentHour,
-          completedTasks
-        )
-      );
-
-      for (const med of medsToTakeNow) {
-        const text = `היי יעלי אהובה שלי ❤️\nתזכורת אוטומטית לקחת ${med.name} (${med.dosage}).\n${med.notes ? 'הערה: ' + med.notes : ''}\nאוהב המון! ✨`;
-
+      for (const text of messages) {
         try {
           await sendTelegramMessage(text);
         } catch (err) {
