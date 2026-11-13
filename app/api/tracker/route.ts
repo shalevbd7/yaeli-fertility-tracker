@@ -71,7 +71,7 @@ export async function GET() {
  *   and 409 is returned. A request without the field at all is rejected when
  *   a document exists, so a client that never loaded can't overwrite it.
  * - A save that would empty both stages and medications of a document that
- *   has data is rejected with 422.
+ *   has data is rejected with 422, unless it carries `confirmClear: true`.
  */
 export async function POST(request: Request) {
   try {
@@ -132,9 +132,12 @@ export async function POST(request: Request) {
         : baseUpdatedAt !== null && existingVersion.getTime() === baseUpdatedAt.getTime();
     if (!sameVersion) return conflict();
 
+    // Emptying a tracker that has data needs an explicit flag, sent by the
+    // client only when the user deliberately deletes the last stage/medication.
     const hadData =
       (existing.stages?.length ?? 0) > 0 || (existing.medications?.length ?? 0) > 0;
-    if (hadData && update.stages.length === 0 && update.medications.length === 0) {
+    const confirmClear = body.confirmClear === true;
+    if (hadData && update.stages.length === 0 && update.medications.length === 0 && !confirmClear) {
       return NextResponse.json({ error: 'refusing to clear tracker' }, { status: 422 });
     }
 

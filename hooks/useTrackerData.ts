@@ -46,7 +46,17 @@ export function useTrackerData(showToast: (message: string, type?: string) => vo
   const queuedPayloadRef = useRef<TrackerPayload | null>(null);
   // Bumping this re-runs the load effect (retry button / after a conflict).
   const [reloadKey, setReloadKey] = useState(0);
+  // Non-zero while a deliberate "delete the last stage/medication" is waiting to
+  // be saved; such saves carry `confirmClear: true` so the server allows
+  // emptying the tracker. Each mark gets a new number so a mark made during an
+  // in-flight save isn't cleared by that save's success.
+  const deliberateClearRef = useRef(0);
+  const clearCounterRef = useRef(0);
 
+  const markDeliberateClear = useCallback(() => {
+    clearCounterRef.current += 1;
+    deliberateClearRef.current = clearCounterRef.current;
+  }, []);
 
   const saveToDatabase = useCallback(async (payload: TrackerPayload) => {
     if (!hasLoadedRef.current) return;
@@ -70,10 +80,15 @@ export function useTrackerData(showToast: (message: string, type?: string) => vo
           continue;
         }
 
+        const sentClearMark = deliberateClearRef.current;
         const res = await fetch('/api/tracker', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...current, baseUpdatedAt: baseUpdatedAtRef.current }),
+          body: JSON.stringify({
+            ...current,
+            baseUpdatedAt: baseUpdatedAtRef.current,
+            ...(sentClearMark ? { confirmClear: true } : {}),
+          }),
         });
 
         if (res.status === 409) {
@@ -97,6 +112,9 @@ export function useTrackerData(showToast: (message: string, type?: string) => vo
         const saved = await res.json();
         baseUpdatedAtRef.current = saved?.updatedAt ?? null;
         lastSavedJsonRef.current = json;
+        if (sentClearMark && deliberateClearRef.current === sentClearMark) {
+          deliberateClearRef.current = 0;
+        }
 
         next = queuedPayloadRef.current;
         queuedPayloadRef.current = null;
@@ -137,6 +155,7 @@ export function useTrackerData(showToast: (message: string, type?: string) => vo
         // (new object), so the autosave effect is guaranteed to run once with the
         // loaded state — it records that as the baseline instead of re-saving it.
         baselinePendingRef.current = Boolean(data);
+        deliberateClearRef.current = 0;
 
         if (data) {
           setHasCycle(data.hasActiveCycle ?? false);
@@ -207,5 +226,6 @@ export function useTrackerData(showToast: (message: string, type?: string) => vo
     completedItems, setCompletedItems,
     isLoading, isSaving, loadError, saveError,
     reload,
+    markDeliberateClear,
   };
 }

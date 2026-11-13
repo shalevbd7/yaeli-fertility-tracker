@@ -35,6 +35,7 @@ export default function App() {
     completedItems, setCompletedItems,
     isLoading, isSaving, loadError, saveError,
     reload,
+    markDeliberateClear,
   } = useTrackerData(showToast);
 
   // Active random affirmation
@@ -138,7 +139,10 @@ export default function App() {
   };
 
   const handleDeleteStage = (id: string) => {
-    setStages(stages.filter(s => s.id !== id));
+    const remaining = stages.filter(s => s.id !== id);
+    // Deliberately deleting the last stage may empty the tracker — allow that save.
+    if (remaining.length === 0) markDeliberateClear();
+    setStages(remaining);
     setIsStageModalOpen(false);
     showToast('השלב הוסר מהפרוטוקול');
   };
@@ -160,7 +164,10 @@ export default function App() {
   };
 
   const handleDeleteMedication = (id: string) => {
-    setMedications(medications.filter(m => m.id !== id));
+    const remaining = medications.filter(m => m.id !== id);
+    // Deliberately deleting the last medication may empty the tracker — allow that save.
+    if (remaining.length === 0) markDeliberateClear();
+    setMedications(remaining);
     setIsMedModalOpen(false);
     showToast('התרופה הוסרה');
   };
