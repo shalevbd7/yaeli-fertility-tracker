@@ -4,6 +4,20 @@ import { FormEvent, useEffect, useState } from 'react';
 import { signIn, useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 
+// Only same-site paths (e.g. /invite/...) are allowed as a post-login target.
+function safeCallbackUrl(): string {
+  if (typeof window === 'undefined') return '/';
+  const raw = new URLSearchParams(window.location.search).get('callbackUrl');
+  if (!raw) return '/';
+  try {
+    const url = new URL(raw, window.location.origin);
+    if (url.origin !== window.location.origin) return '/';
+    return url.pathname + url.search;
+  } catch {
+    return '/';
+  }
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const { status } = useSession();
@@ -14,7 +28,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (status === 'authenticated') {
-      router.replace('/');
+      router.replace(safeCallbackUrl());
     }
   }, [status, router]);
 
@@ -30,12 +44,16 @@ export default function LoginPage() {
         redirect: false,
       });
 
+      if (result?.error === 'RATE_LIMITED') {
+        setError('יותר מדי ניסיונות התחברות. נסי שוב בעוד כמה דקות.');
+        return;
+      }
       if (result?.error) {
         setError('אימייל או סיסמה שגויים. נסי שוב.');
         return;
       }
 
-      router.push('/');
+      router.push(safeCallbackUrl());
       router.refresh();
     } catch {
       setError('משהו השתבש. נסי שוב בעוד רגע.');

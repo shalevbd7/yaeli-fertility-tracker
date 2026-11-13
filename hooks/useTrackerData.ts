@@ -32,6 +32,9 @@ export function useTrackerData(showToast: (message: string, type?: string) => vo
   const [isSaving, setIsSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // True when the server says this account has no tracker access (partner
+  // waiting for approval / unlinked). Not an error: the page shows a status screen.
+  const [noAccess, setNoAccess] = useState(false);
   // Saving is allowed only after a SUCCESSFUL load. If loading fails we must
   // never autosave, or default state would overwrite the real data.
   const hasLoadedRef = useRef(false);
@@ -143,9 +146,14 @@ export function useTrackerData(showToast: (message: string, type?: string) => vo
           window.location.href = '/login';
           return;
         }
+        if (res.status === 403) {
+          if (!cancelled) setNoAccess(true);
+          return;
+        }
         if (!res.ok) {
           throw new Error('Failed to load data');
         }
+        if (!cancelled) setNoAccess(false);
         const data = await res.json();
         if (cancelled) return;
 
@@ -224,7 +232,7 @@ export function useTrackerData(showToast: (message: string, type?: string) => vo
     medications, setMedications,
     stages, setStages,
     completedItems, setCompletedItems,
-    isLoading, isSaving, loadError, saveError,
+    isLoading, isSaving, loadError, saveError, noAccess,
     reload,
     markDeliberateClear,
   };

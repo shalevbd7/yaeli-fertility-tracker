@@ -4,8 +4,11 @@ import type React from 'react';
 import { signOut } from 'next-auth/react';
 import TabNav from './TabNav';
 import type { CycleMetrics, TabId } from '@/lib/tracker/types';
+import type { TabDef } from '@/lib/tracker/tabs';
 
 type AppHeaderProps = {
+  tabs: TabDef[];
+  badges?: Record<string, number>;
   activeTab: TabId;
   setActiveTab: React.Dispatch<React.SetStateAction<TabId>>;
   hasCycle: boolean;
@@ -15,7 +18,7 @@ type AppHeaderProps = {
   cycleMetrics: CycleMetrics;
 };
 
-export default function AppHeader({ activeTab, setActiveTab, hasCycle, isLoading, isSaving, saveError, cycleMetrics }: AppHeaderProps) {
+export default function AppHeader({ tabs, badges, activeTab, setActiveTab, hasCycle, isLoading, isSaving, saveError, cycleMetrics }: AppHeaderProps) {
   return (
     <header className="bg-white/80 backdrop-blur-md sticky top-0 z-30 border-b border-rose-100 shadow-xs">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
@@ -70,7 +73,7 @@ export default function AppHeader({ activeTab, setActiveTab, hasCycle, isLoading
       </div>
 
       {/* Navigation Tabs */}
-      <TabNav activeTab={activeTab} setActiveTab={setActiveTab} />
+      <TabNav tabs={tabs} badges={badges} activeTab={activeTab} setActiveTab={setActiveTab} />
     </header>
   );
 }

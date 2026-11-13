@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { ymdInIsrael } from '@/lib/israel-date';
 import { toISODate } from '@/lib/tracker/dates';
 import { buildCalendarEvents, computeCycleMetrics, resolveStages } from '@/lib/tracker/schedule';
@@ -18,6 +18,10 @@ import StageModal from '@/components/tracker/StageModal';
 import MedicationModal from '@/components/tracker/MedicationModal';
 import ResetCycleModal from '@/components/tracker/ResetCycleModal';
 import ToastNotification from '@/components/tracker/ToastNotification';
+import SettingsTab from '@/components/settings/SettingsTab';
+import AccessStatusScreen from '@/components/settings/AccessStatusScreen';
+import { useAccount } from '@/hooks/useAccount';
+import { FERTILITY_TABS, SETTINGS_TAB } from '@/lib/tracker/tabs';
 
 export default function App() {
   // Navigation active tab
@@ -33,7 +37,7 @@ export default function App() {
     medications, setMedications,
     stages, setStages,
     completedItems, setCompletedItems,
-    isLoading, isSaving, loadError, saveError,
+    isLoading, isSaving, loadError, saveError, noAccess,
     reload,
     markDeliberateClear,
   } = useTrackerData(showToast);
@@ -65,6 +69,19 @@ export default function App() {
 
   const todayYmdIsrael = ymdInIsrael();
 
+  // Account / role (polled for the pending-requests badge and approval)
+  const { account, accountError, refreshAccount } = useAccount();
+  const role = account?.role;
+  const hasTrackerAccess = !noAccess && role !== 'pending' && role !== 'none';
+
+  // A waiting partner was approved → load the shared tracker.
+  useEffect(() => {
+    if (noAccess && (role === 'owner' || role === 'partner')) reload();
+  }, [noAccess, role, reload]);
+
+  const tabs = [...FERTILITY_TABS, SETTINGS_TAB];
+  const badges = { settings: role === 'owner' ? (account?.pendingRequests.length ?? 0) : 0 };
+
   const resolvedStages = useMemo(
     () => resolveStages(stages, cycleStartDate, medications),
     [stages, cycleStartDate, medications]
@@ -88,6 +105,12 @@ export default function App() {
       });
 
       if (!res.ok) throw new Error('Failed to send');
+      const result = await res.json().catch(() => ({}));
+      if (result?.skipped) {
+        // Test account or TELEGRAM_DRY_RUN: nothing was sent to the real chat.
+        showToast('מצב בדיקה – התזכורת לא נשלחה לטלגרם', 'error');
+        return;
+      }
       showToast('התזכורת נשלחה ליעלי בטלגרם בהצלחה! 🌸', 'success');
     } catch (err) {
       showToast('שגיאה בשליחת התזכורת. ודא שהגדרת טוקן נכון.', 'error');
@@ -177,6 +200,8 @@ export default function App() {
 
       {/* Top Loving Header Bar */}
       <AppHeader
+        tabs={tabs}
+        badges={badges}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         hasCycle={hasCycle}
@@ -202,7 +227,9 @@ export default function App() {
           </div>
         )}
 
-        {isLoading ? (
+        {!hasTrackerAccess ? (
+          <AccessStatusScreen role={role} />
+        ) : isLoading ? (
           <div className="bg-white rounded-3xl p-12 border border-rose-100 shadow-xs text-center space-y-4">
             <div className="w-12 h-12 border-4 border-rose-200 border-t-rose-500 rounded-full animate-spin mx-auto" />
             <p className="text-slate-600 font-medium">טוענים את הנתונים שלך מהענן...</p>
@@ -272,6 +299,16 @@ export default function App() {
 
             {/* TAB 5: ARCHITECTURE, DEPLOYMENT & TECH STACK (הסבר למפתח) */}
             {activeTab === 'architecture' && <ArchitectureTab />}
+
+            {/* SETTINGS (partner linking; owner-only sections inside) */}
+            {activeTab === 'settings' && (
+              <SettingsTab
+                account={account}
+                accountError={accountError}
+                refreshAccount={refreshAccount}
+                showToast={showToast}
+              />
+            )}
 
           </>
         )}
