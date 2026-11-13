@@ -258,7 +258,20 @@ export default function App() {
   const [isSaving, setIsSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Saving is allowed only after a SUCCESSFUL load. If loading fails we must
+  // never autosave, or default state would overwrite the real data.
   const hasLoadedRef = useRef(false);
+  // `updatedAt` of the server document we last loaded/saved (version stamp).
+  const baseUpdatedAtRef = useRef<string | null>(null);
+  // JSON of the payload the server is known to hold — used to skip no-op saves.
+  const lastSavedJsonRef = useRef<string | null>(null);
+  // Set after a load with data: the next autosave run records a baseline instead of saving.
+  const baselinePendingRef = useRef(false);
+  // Saves are serialized: while one is in flight, only the latest payload is queued.
+  const saveInFlightRef = useRef(false);
+  const queuedPayloadRef = useRef<TrackerPayload | null>(null);
+  // Bumping this re-runs the load effect (retry button / after a conflict).
+  const [reloadKey, setReloadKey] = useState(0);
 
   const showToast = (message: string, type = 'success') => {
     setToast({ message, type });
@@ -268,31 +281,74 @@ export default function App() {
   };
 
   const saveToDatabase = useCallback(async (payload: TrackerPayload) => {
+    if (!hasLoadedRef.current) return;
+    if (saveInFlightRef.current) {
+      queuedPayloadRef.current = payload;
+      return;
+    }
+
+    saveInFlightRef.current = true;
     setIsSaving(true);
     setSaveError(null);
+    let next: TrackerPayload | null = payload;
     try {
-      const res = await fetch('/api/tracker', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        throw new Error('Failed to save data');
+      while (next && hasLoadedRef.current) {
+        const current: TrackerPayload = next;
+        next = null;
+        const json = JSON.stringify(current);
+        if (json === lastSavedJsonRef.current) {
+          next = queuedPayloadRef.current;
+          queuedPayloadRef.current = null;
+          continue;
+        }
+
+        const res = await fetch('/api/tracker', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...current, baseUpdatedAt: baseUpdatedAtRef.current }),
+        });
+
+        if (res.status === 409) {
+          // The data changed elsewhere (another device / tab). Stop saving and reload.
+          hasLoadedRef.current = false;
+          queuedPayloadRef.current = null;
+          showToast('הנתונים עודכנו ממכשיר אחר. טוענים את הגרסה העדכנית...', 'error');
+          setReloadKey(k => k + 1);
+          return;
+        }
+        if (res.status === 422) {
+          queuedPayloadRef.current = null;
+          setSaveError('השמירה נחסמה כדי לא למחוק את כל השלבים והתרופות.');
+          showToast('השמירה נחסמה כדי לא למחוק את כל הנתונים.', 'error');
+          return;
+        }
+        if (!res.ok) {
+          throw new Error('Failed to save data');
+        }
+
+        const saved = await res.json();
+        baseUpdatedAtRef.current = saved?.updatedAt ?? null;
+        lastSavedJsonRef.current = json;
+
+        next = queuedPayloadRef.current;
+        queuedPayloadRef.current = null;
       }
     } catch (err) {
       console.error('Save failed:', err);
       setSaveError('שמירה בענן נכשלה. הנתונים נשמרים מקומית עד לחיבור מחדש.');
       showToast('שגיאה בשמירה לענן. נסי שוב בעוד רגע.', 'error');
     } finally {
+      saveInFlightRef.current = false;
       setIsSaving(false);
     }
   }, []);
 
-  // Load tracker data from MongoDB on mount
+  // Load tracker data from MongoDB on mount (and on retry / after a conflict)
   useEffect(() => {
     let cancelled = false;
 
     async function loadData() {
+      hasLoadedRef.current = false;
       setIsLoading(true);
       setLoadError(null);
       try {
@@ -307,6 +363,13 @@ export default function App() {
         const data = await res.json();
         if (cancelled) return;
 
+        baseUpdatedAtRef.current = data?.updatedAt ?? null;
+        lastSavedJsonRef.current = null;
+        // When data exists, the state updates below always change `completedItems`
+        // (new object), so the autosave effect is guaranteed to run once with the
+        // loaded state — it records that as the baseline instead of re-saving it.
+        baselinePendingRef.current = Boolean(data);
+
         if (data) {
           setHasCycle(data.hasActiveCycle ?? false);
           if (data.cycleStartDate) {
@@ -319,38 +382,48 @@ export default function App() {
             setStages(data.stages);
           }
           if (data.completedTasks && typeof data.completedTasks === 'object') {
-            setCompletedItems(data.completedTasks);
+            setCompletedItems({ ...data.completedTasks });
           }
         }
+        // Only a successful load enables saving.
+        hasLoadedRef.current = true;
       } catch (err) {
         console.error('Load failed:', err);
         if (!cancelled) {
-          setLoadError('לא הצלחנו לטעון נתונים מהענן. מוצגים נתוני ברירת מחדל.');
+          setLoadError('לא הצלחנו לטעון נתונים מהענן. שינויים לא יישמרו עד שהטעינה תצליח.');
         }
       } finally {
         if (!cancelled) {
           setIsLoading(false);
-          hasLoadedRef.current = true;
         }
       }
     }
 
     loadData();
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadKey]);
 
   // Auto-save to MongoDB when state changes (debounced)
   useEffect(() => {
     if (!hasLoadedRef.current) return;
 
+    const payload: TrackerPayload = {
+      hasActiveCycle: hasCycle,
+      cycleStartDate: cycleStartDate ? new Date(cycleStartDate + 'T00:00:00').toISOString() : null,
+      stages,
+      medications,
+      completedTasks: completedItems,
+    };
+
+    if (baselinePendingRef.current) {
+      // First run right after a load: this is the server's data, nothing to save.
+      baselinePendingRef.current = false;
+      lastSavedJsonRef.current = JSON.stringify(payload);
+      return;
+    }
+
     const timer = setTimeout(() => {
-      saveToDatabase({
-        hasActiveCycle: hasCycle,
-        cycleStartDate: cycleStartDate ? new Date(cycleStartDate + 'T00:00:00').toISOString() : null,
-        stages,
-        medications,
-        completedTasks: completedItems,
-      });
+      saveToDatabase(payload);
     }, 800);
 
     return () => clearTimeout(timer);
@@ -633,8 +706,15 @@ export default function App() {
       <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
 
         {loadError && (
-          <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-2xl p-4">
-            {loadError}
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-2xl p-4 flex items-center justify-between gap-4">
+            <span>{loadError}</span>
+            <button
+              type="button"
+              onClick={() => setReloadKey(k => k + 1)}
+              className="text-xs bg-white text-amber-800 hover:bg-amber-100 border border-amber-300 px-3 py-1.5 rounded-lg font-semibold cursor-pointer transition shrink-0"
+            >
+              נסי שוב
+            </button>
           </div>
         )}
 
