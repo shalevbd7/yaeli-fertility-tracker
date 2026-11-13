@@ -85,3 +85,39 @@ export function shouldRemindMedication(
   const stage = currentStageForToday(stages, cycleStartYmd, todayYmd);
   return stage?.medicationId === med.id;
 }
+
+// ---------------------------------------------------------------------------
+// YYYY-MM-DD helpers (calendar-day arithmetic, independent of the server's TZ).
+// "Today" for the user is always ymdInIsrael().
+
+const YMD_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+export function isValidYmd(value: unknown): value is string {
+  if (typeof value !== 'string' || !YMD_PATTERN.test(value)) return false;
+  const [y, m, d] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+
+export function addDaysYmd(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d + days));
+  return date.toISOString().slice(0, 10);
+}
+
+/** Whole days from `fromYmd` to `toYmd` (positive if `toYmd` is later). */
+export function diffDaysYmd(fromYmd: string, toYmd: string): number {
+  return cycleDayNumber(fromYmd, toYmd) - 1;
+}
+
+/** Day of week in Israel: 0 = Sunday … 6 = Saturday. */
+export function israelWeekday(date: Date = new Date()): number {
+  const short = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: ISRAEL_TZ }).format(date);
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(short);
+}
+
+/** Day of week for a YYYY-MM-DD date: 0 = Sunday … 6 = Saturday. */
+export function weekdayOfYmd(ymd: string): number {
+  const [y, m, d] = ymd.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}

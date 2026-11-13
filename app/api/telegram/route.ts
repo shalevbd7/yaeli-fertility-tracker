@@ -1,51 +1,44 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
+import { getTrackerAccess, ownerEmailForTracker } from '@/lib/access';
+import { isTestAccountEmail } from '@/lib/test-accounts';
+import { sendTelegramMessage } from '@/lib/telegram';
 
 export async function POST(request: Request) {
   try {
-    // מוודאים שרק משתמש מחובר יכול לשלוח הודעות
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
+    // Only members of a tracker (owner or approved partner) may send.
+    const access = await getTrackerAccess();
+    if (!access) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (!access.trackerUserId) {
+      return NextResponse.json({ error: 'no-access' }, { status: 403 });
     }
 
     const body = await request.json();
-    const { message } = body;
+    const { message } = body ?? {};
 
-    if (!message) {
+    if (!message || typeof message !== 'string') {
       return NextResponse.json({ error: 'Message is required' }, { status: 400 });
     }
 
-    const token = process.env.TELEGRAM_BOT_TOKEN;
-    const chatId = process.env.TELEGRAM_CHAT_ID;
-
-    if (!token || !chatId) {
-      return NextResponse.json({ error: 'Telegram configuration missing' }, { status: 500 });
+    // Test accounts never send to the real chat — neither the caller nor the tracker's owner.
+    const ownerEmail = await ownerEmailForTracker(access.trackerUserId);
+    if (access.user.isTestAccount || isTestAccountEmail(ownerEmail)) {
+      console.info('[telegram] skipped for test account');
+      return NextResponse.json({ success: false, skipped: 'test-account' });
     }
 
-    // קריאה ל-API הרשמי של טלגרם
-    const telegramUrl = `https://api.telegram.org/bot${token}/sendMessage`;
-
-    const response = await fetch(telegramUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: message,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.description || 'Failed to send Telegram message');
+    const result = await sendTelegramMessage(message);
+    if (!result.sent) {
+      if (result.reason === 'dry-run') {
+        return NextResponse.json({ success: false, skipped: 'dry-run' });
+      }
+      return NextResponse.json({ error: 'Telegram is not configured' }, { status: 500 });
     }
 
     return NextResponse.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Telegram API error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to send message' }, { status: 500 });
   }
 }
