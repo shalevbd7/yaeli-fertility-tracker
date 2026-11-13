@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DEFAULT_STAGES, INITIAL_MEDICATIONS } from '@/lib/tracker/defaults';
 import { toISODate } from '@/lib/tracker/dates';
-import type { Medication, Stage, TrackerPayload } from '@/lib/tracker/types';
+import type { Medication, PregnancyData, Stage, TrackerMode, TrackerPayload } from '@/lib/tracker/types';
 
 /**
  * Tracker state + cloud sync (load on mount, debounced autosave).
@@ -26,6 +26,14 @@ export function useTrackerData(showToast: (message: string, type?: string) => vo
 
   // Checklist for today's completed tasks
   const [completedItems, setCompletedItems] = useState<Record<string, string>>({});
+
+  // Pregnancy mode. `mode` and the anchor date are changed only through the
+  // owner-only /api/tracker/mode; the pregnancy lists are autosaved below.
+  const [mode, setMode] = useState<TrackerMode>('fertility');
+  const [fertilityArchivedAt, setFertilityArchivedAt] = useState<string | null>(null);
+  const [pregnancy, setPregnancy] = useState<PregnancyData | null>(null);
+  // Brand-new account with no data at all → the page shows onboarding.
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
 
   // Database sync state
   const [isLoading, setIsLoading] = useState(true);
@@ -165,6 +173,11 @@ export function useTrackerData(showToast: (message: string, type?: string) => vo
         baselinePendingRef.current = Boolean(data);
         deliberateClearRef.current = 0;
 
+        setMode(data?.mode === 'pregnancy' ? 'pregnancy' : 'fertility');
+        setFertilityArchivedAt(data?.fertilityArchivedAt ?? null);
+        setPregnancy(data?.pregnancy ?? null);
+        setNeedsOnboarding(!data || data.isEmpty === true);
+
         if (data) {
           setHasCycle(data.hasActiveCycle ?? false);
           if (data.cycleStartDate) {
@@ -208,6 +221,17 @@ export function useTrackerData(showToast: (message: string, type?: string) => vo
       stages,
       medications,
       completedTasks: completedItems,
+      ...(pregnancy
+        ? {
+            pregnancy: {
+              tests: pregnancy.tests,
+              symptomLog: pregnancy.symptomLog,
+              medications: pregnancy.medications,
+              doseLog: pregnancy.doseLog,
+              asNeededLog: pregnancy.asNeededLog,
+            },
+          }
+        : {}),
     };
 
     if (baselinePendingRef.current) {
@@ -222,7 +246,7 @@ export function useTrackerData(showToast: (message: string, type?: string) => vo
     }, 800);
 
     return () => clearTimeout(timer);
-  }, [hasCycle, cycleStartDate, stages, medications, completedItems, saveToDatabase]);
+  }, [hasCycle, cycleStartDate, stages, medications, completedItems, pregnancy, saveToDatabase]);
 
   const reload = useCallback(() => setReloadKey(k => k + 1), []);
 
@@ -232,6 +256,8 @@ export function useTrackerData(showToast: (message: string, type?: string) => vo
     medications, setMedications,
     stages, setStages,
     completedItems, setCompletedItems,
+    mode, fertilityArchivedAt, needsOnboarding,
+    pregnancy, setPregnancy,
     isLoading, isSaving, loadError, saveError, noAccess,
     reload,
     markDeliberateClear,

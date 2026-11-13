@@ -8,6 +8,8 @@ import type { TabDef } from '@/lib/tracker/tabs';
 
 type AppHeaderProps = {
   tabs: TabDef[];
+  /** In pregnancy mode, e.g. "שבוע 12+3"; replaces the cycle-day pill. */
+  pregnancyLabel?: string | null;
   badges?: Record<string, number>;
   activeTab: TabId;
   setActiveTab: React.Dispatch<React.SetStateAction<TabId>>;
@@ -18,7 +20,7 @@ type AppHeaderProps = {
   cycleMetrics: CycleMetrics;
 };
 
-export default function AppHeader({ tabs, badges, activeTab, setActiveTab, hasCycle, isLoading, isSaving, saveError, cycleMetrics }: AppHeaderProps) {
+export default function AppHeader({ tabs, pregnancyLabel, badges, activeTab, setActiveTab, hasCycle, isLoading, isSaving, saveError, cycleMetrics }: AppHeaderProps) {
   return (
     <header className="bg-white/80 backdrop-blur-md sticky top-0 z-30 border-b border-rose-100 shadow-xs">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
@@ -59,7 +61,11 @@ export default function AppHeader({ tabs, badges, activeTab, setActiveTab, hasCy
               שגיאת שמירה
             </span>
           )}
-          {hasCycle ? (
+          {pregnancyLabel ? (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-pink-100 text-pink-700 border border-pink-200">
+              🤰 {pregnancyLabel}
+            </span>
+          ) : hasCycle ? (
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-700 border border-rose-200 animate-pulse">
               <span className="w-2 h-2 rounded-full bg-rose-500"></span>
               יום {cycleMetrics.cycleDay} למחזור

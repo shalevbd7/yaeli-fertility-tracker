@@ -10,3 +10,12 @@ export const FERTILITY_TABS: TabDef[] = [
 ];
 
 export const SETTINGS_TAB: TabDef = { id: 'settings', label: 'הגדרות', icon: '⚙️' };
+
+// Pregnancy mode tabs, followed by Settings.
+export const PREGNANCY_TABS: TabDef[] = [
+  { id: 'dashboard', label: 'בית', icon: '🏠' },
+  { id: 'pg-timeline', label: 'ציר ההריון', icon: '🤰' },
+  { id: 'pg-tests', label: 'בדיקות', icon: '🩺' },
+  { id: 'pg-symptoms', label: 'תסמינים', icon: '🌿' },
+  { id: 'pg-meds', label: 'תרופות וויטמינים', icon: '💊' },
+];

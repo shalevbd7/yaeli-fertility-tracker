@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { ymdInIsrael } from '@/lib/israel-date';
+import { israelWeekday, ymdInIsrael } from '@/lib/israel-date';
 import { toISODate } from '@/lib/tracker/dates';
 import { buildCalendarEvents, computeCycleMetrics, resolveStages } from '@/lib/tracker/schedule';
 import type { Medication, Stage } from '@/lib/tracker/types';
@@ -21,7 +21,18 @@ import ToastNotification from '@/components/tracker/ToastNotification';
 import SettingsTab from '@/components/settings/SettingsTab';
 import AccessStatusScreen from '@/components/settings/AccessStatusScreen';
 import { useAccount } from '@/hooks/useAccount';
-import { FERTILITY_TABS, SETTINGS_TAB } from '@/lib/tracker/tabs';
+import { FERTILITY_TABS, PREGNANCY_TABS, SETTINGS_TAB } from '@/lib/tracker/tabs';
+import { usePregnancyActions } from '@/hooks/usePregnancyActions';
+import { STANDARD_TESTS } from '@/lib/content/pregnancy';
+import { formatGestationalAge, pregnancyStatus } from '@/lib/pregnancy/dates';
+import { buildTestRows, upcomingTests } from '@/lib/pregnancy/view';
+import PregnancySettings from '@/components/settings/PregnancySettings';
+import OnboardingScreen from '@/components/pregnancy/OnboardingScreen';
+import PregnancyDashboard from '@/components/pregnancy/PregnancyDashboard';
+import PregnancyTimeline from '@/components/pregnancy/PregnancyTimeline';
+import PregnancyTests from '@/components/pregnancy/PregnancyTests';
+import PregnancySymptoms from '@/components/pregnancy/PregnancySymptoms';
+import PregnancyMeds from '@/components/pregnancy/PregnancyMeds';
 
 export default function App() {
   // Navigation active tab
@@ -37,6 +48,8 @@ export default function App() {
     medications, setMedications,
     stages, setStages,
     completedItems, setCompletedItems,
+    mode, fertilityArchivedAt, needsOnboarding,
+    pregnancy, setPregnancy,
     isLoading, isSaving, loadError, saveError, noAccess,
     reload,
     markDeliberateClear,
@@ -79,7 +92,26 @@ export default function App() {
     if (noAccess && (role === 'owner' || role === 'partner')) reload();
   }, [noAccess, role, reload]);
 
-  const tabs = [...FERTILITY_TABS, SETTINGS_TAB];
+  // Pregnancy mode: the whole UI switches; fertility data stays (archived, hidden).
+  const isPregnancy = mode === 'pregnancy' && Boolean(pregnancy?.lmpDate);
+  const weekdayIsrael = israelWeekday();
+  const pgStatus = useMemo(
+    () => (isPregnancy && pregnancy ? pregnancyStatus(pregnancy.lmpDate, todayYmdIsrael) : null),
+    [isPregnancy, pregnancy, todayYmdIsrael]
+  );
+  const testRows = useMemo(
+    () => (isPregnancy && pregnancy ? buildTestRows(STANDARD_TESTS, pregnancy.tests, pregnancy.lmpDate, todayYmdIsrael) : []),
+    [isPregnancy, pregnancy, todayYmdIsrael]
+  );
+  const pg = usePregnancyActions(setPregnancy, showToast, reload, todayYmdIsrael);
+
+  // Onboarding only for a brand-new, completely empty tracker, and only for the owner.
+  const showOnboarding = needsOnboarding && role === 'owner';
+  const partnerAwaitingSetup = needsOnboarding && role === 'partner';
+
+  const tabs = [...(isPregnancy ? PREGNANCY_TABS : FERTILITY_TABS), SETTINGS_TAB];
+  // If the mode changed under the current tab, fall back to the home tab.
+  const currentTab = tabs.some((t) => t.id === activeTab) ? activeTab : 'dashboard';
   const badges = { settings: role === 'owner' ? (account?.pendingRequests.length ?? 0) : 0 };
 
   const resolvedStages = useMemo(
@@ -202,7 +234,8 @@ export default function App() {
       <AppHeader
         tabs={tabs}
         badges={badges}
-        activeTab={activeTab}
+        activeTab={currentTab}
+        pregnancyLabel={pgStatus ? formatGestationalAge(pgStatus.weeks, pgStatus.days) : null}
         setActiveTab={setActiveTab}
         hasCycle={hasCycle}
         isLoading={isLoading}
@@ -237,11 +270,76 @@ export default function App() {
         ) : (
           <>
 
+            {showOnboarding ? (
+              <OnboardingScreen onChoose={pg.completeOnboarding} />
+            ) : needsOnboarding && !account && !accountError ? (
+              <div className="bg-white rounded-3xl p-12 border border-rose-100 shadow-xs text-center">
+                <div className="w-10 h-10 border-4 border-rose-200 border-t-rose-500 rounded-full animate-spin mx-auto" />
+              </div>
+            ) : partnerAwaitingSetup ? (
+              <div className="bg-white rounded-3xl p-8 sm:p-12 border border-rose-200 shadow-sm text-center max-w-2xl mx-auto space-y-3">
+                <div className="text-4xl">🌸</div>
+                <h2 className="text-xl font-bold text-slate-800">המעקב עדיין לא הוגדר</h2>
+                <p className="text-slate-600">בעלת המעקב תבחר בקרוב בין מעקב פוריות למעקב הריון, ואז הכול יופיע כאן.</p>
+              </div>
+            ) : (
+            <>
             {/* Loving Quote Banner */}
             <AffirmationBanner quoteIndex={quoteIndex} setQuoteIndex={setQuoteIndex} />
 
+            {/* PREGNANCY MODE TABS */}
+            {isPregnancy && pregnancy && pgStatus && (
+              <>
+                {currentTab === 'dashboard' && (
+                  <PregnancyDashboard
+                    status={pgStatus}
+                    lmpDate={pregnancy.lmpDate}
+                    todayYmd={todayYmdIsrael}
+                    weekday={weekdayIsrael}
+                    medications={pregnancy.medications}
+                    doseLog={pregnancy.doseLog}
+                    asNeededLog={pregnancy.asNeededLog}
+                    upcoming={upcomingTests(testRows)}
+                    onToggleDose={pg.toggleDose}
+                    onTakeAsNeeded={pg.takeAsNeeded}
+                    sendTelegramReminder={sendTelegramReminder}
+                    sendingMedId={sendingMedId}
+                    setActiveTab={setActiveTab}
+                  />
+                )}
+                {currentTab === 'pg-timeline' && <PregnancyTimeline status={pgStatus} lmpDate={pregnancy.lmpDate} />}
+                {currentTab === 'pg-tests' && (
+                  <PregnancyTests rows={testRows} onSaveTest={pg.saveTest} onDeleteTest={pg.deleteTest} />
+                )}
+                {currentTab === 'pg-symptoms' && (
+                  <PregnancySymptoms
+                    currentTrimester={pgStatus.trimester}
+                    todayYmd={todayYmdIsrael}
+                    symptomLog={pregnancy.symptomLog}
+                    onAddLog={pg.addSymptomLog}
+                    onDeleteLog={pg.deleteSymptomLog}
+                  />
+                )}
+                {currentTab === 'pg-meds' && (
+                  <PregnancyMeds
+                    medications={pregnancy.medications}
+                    doseLog={pregnancy.doseLog}
+                    asNeededLog={pregnancy.asNeededLog}
+                    todayYmd={todayYmdIsrael}
+                    weekday={weekdayIsrael}
+                    onSaveMed={pg.saveMed}
+                    onDeleteMed={pg.deleteMed}
+                    onToggleDose={pg.toggleDose}
+                    onTakeAsNeeded={pg.takeAsNeeded}
+                    sendTelegramReminder={sendTelegramReminder}
+                    sendingMedId={sendingMedId}
+                  />
+                )}
+              </>
+            )}
+
             {/* TAB 1: DASHBOARD */}
-            {activeTab === 'dashboard' && (
+            {!isPregnancy && currentTab === 'dashboard' && (
               <DashboardTab
                 setActiveTab={setActiveTab}
                 hasCycle={hasCycle}
@@ -266,7 +364,7 @@ export default function App() {
             )}
 
             {/* TAB 2: TIMELINE & STAGE MANAGER (Drag / Reorder / Customize) */}
-            {activeTab === 'timeline' && (
+            {!isPregnancy && currentTab === 'timeline' && (
               <TimelineTab
                 cycleStartDate={cycleStartDate}
                 stages={stages}
@@ -278,7 +376,7 @@ export default function App() {
             )}
 
             {/* TAB 3: CALENDAR VIEW (Like Google Calendar) */}
-            {activeTab === 'calendar' && (
+            {!isPregnancy && currentTab === 'calendar' && (
               <CalendarTab
                 calendarDate={calendarDate}
                 setCalendarDate={setCalendarDate}
@@ -287,7 +385,7 @@ export default function App() {
             )}
 
             {/* TAB 4: MEDICINE CABINET & REMINDERS (ארון תרופות מלא) */}
-            {activeTab === 'meds' && (
+            {!isPregnancy && currentTab === 'meds' && (
               <MedsTab
                 medications={medications}
                 sendingMedId={sendingMedId}
@@ -298,16 +396,28 @@ export default function App() {
             )}
 
             {/* TAB 5: ARCHITECTURE, DEPLOYMENT & TECH STACK (הסבר למפתח) */}
-            {activeTab === 'architecture' && <ArchitectureTab />}
+            {!isPregnancy && currentTab === 'architecture' && <ArchitectureTab />}
 
             {/* SETTINGS (partner linking; owner-only sections inside) */}
-            {activeTab === 'settings' && (
+            {currentTab === 'settings' && (
               <SettingsTab
                 account={account}
                 accountError={accountError}
                 refreshAccount={refreshAccount}
                 showToast={showToast}
-              />
+              >
+                {/* Owner-only (SettingsTab renders children for the owner only) */}
+                <PregnancySettings
+                  mode={isPregnancy ? 'pregnancy' : 'fertility'}
+                  lmpDate={pregnancy?.lmpDate ?? null}
+                  fertilityArchivedAt={fertilityArchivedAt}
+                  onStartPregnancy={pg.startPregnancy}
+                  onUpdateLmp={pg.updateLmp}
+                  onRestoreFertility={pg.restoreFertility}
+                />
+              </SettingsTab>
+            )}
+            </>
             )}
 
           </>
