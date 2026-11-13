@@ -22,6 +22,13 @@ const UserSchema = new mongoose.Schema(
       required: true,
       unique: true,
     },
+    // Added for partner linking. Existing users have no value → treated as 'owner'.
+    // 'partner' = signed up through an invite link (never owns a tracker).
+    accountType: {
+      type: String,
+      enum: ['owner', 'partner'],
+      default: 'owner',
+    },
   },
   { timestamps: true }
 );

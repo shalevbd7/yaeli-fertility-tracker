@@ -35,6 +35,9 @@ const UserCycleTrackerSchema = new mongoose.Schema(
       of: String,
       default: {},
     },
+    // Added for partner linking: User._id strings of linked partners.
+    // No default, so existing documents are not changed until a partner is approved.
+    memberUserIds: { type: [String], default: undefined, index: true },
   },
   { timestamps: true }
 );

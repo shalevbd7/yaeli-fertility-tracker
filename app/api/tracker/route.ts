@@ -1,12 +1,23 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
 import { connectDB } from '@/lib/mongodb';
 import { Tracker } from '@/lib/models/Tracking';
+import { getTrackerAccess } from '@/lib/access';
 
-async function getTrackerUserId() {
-  const session = await getServerSession(authOptions);
-  return session?.user?.trackerUserId ?? null;
+/**
+ * The tracker the caller may access: the owner's own tracker, or for an
+ * approved partner the owner's tracker. Pending/unlinked partners get 403.
+ */
+async function resolveTrackerUserId(): Promise<
+  { userId: string; error?: undefined } | { userId?: undefined; error: NextResponse }
+> {
+  const access = await getTrackerAccess();
+  if (!access) {
+    return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
+  }
+  if (!access.trackerUserId) {
+    return { error: NextResponse.json({ error: 'no-access', role: access.role }, { status: 403 }) };
+  }
+  return { userId: access.trackerUserId };
 }
 
 type TrackerLean = {
@@ -41,10 +52,9 @@ function conflict() {
 
 export async function GET() {
   try {
-    const userId = await getTrackerUserId();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const resolved = await resolveTrackerUserId();
+    if (resolved.error) return resolved.error;
+    const userId = resolved.userId;
 
     await connectDB();
 
@@ -75,10 +85,9 @@ export async function GET() {
  */
 export async function POST(request: Request) {
   try {
-    const userId = await getTrackerUserId();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const resolved = await resolveTrackerUserId();
+    if (resolved.error) return resolved.error;
+    const userId = resolved.userId;
 
     const body = await request.json();
     if (!body || typeof body !== 'object') {

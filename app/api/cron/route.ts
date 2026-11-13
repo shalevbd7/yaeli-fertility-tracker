@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { Tracker } from '@/lib/models/Tracking';
+import { User } from '@/lib/models/User';
+import { isTestAccountEmail } from '@/lib/test-accounts';
+import { sendTelegramMessage } from '@/lib/telegram';
 import {
   israelHourString,
   shouldRemindMedication,
@@ -34,12 +37,23 @@ export async function GET(request: Request) {
     const todayYmd = ymdInIsrael();
     const currentHour = israelHourString();
 
-    const token = process.env.TELEGRAM_BOT_TOKEN;
-    const chatId = process.env.TELEGRAM_CHAT_ID;
+    // Trackers owned by test accounts never send (the chat belongs to the real account).
+    // A tracker without a matching user record is NOT skipped, to keep the real
+    // account's reminders working exactly as before.
+    const owners = (await User.find({
+      trackerUserId: { $in: activeTrackers.map((t) => t.userId) },
+    })
+      .select('trackerUserId email')
+      .lean()) as Array<{ trackerUserId: string; email: string }>;
+    const testTrackerIds = new Set(
+      owners.filter((u) => isTestAccountEmail(u.email)).map((u) => u.trackerUserId)
+    );
 
     let sentCount = 0;
 
     for (const tracker of activeTrackers) {
+      if (testTrackerIds.has(tracker.userId)) continue;
+
       const completedTasks = completedTasksRecord(tracker.completedTasks);
       const cycleStart = cycleStartYmd(tracker.cycleStartDate);
 
@@ -62,11 +76,12 @@ export async function GET(request: Request) {
       for (const med of medsToTakeNow) {
         const text = `היי יעלי אהובה שלי ❤️\nתזכורת אוטומטית לקחת ${med.name} (${med.dosage}).\n${med.notes ? 'הערה: ' + med.notes : ''}\nאוהב המון! ✨`;
 
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: chatId, text }),
-        });
+        try {
+          await sendTelegramMessage(text);
+        } catch (err) {
+          // As before, one failed message doesn't stop the other reminders.
+          console.error('Cron: Telegram send failed:', err);
+        }
 
         sentCount++;
       }
@@ -74,8 +89,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ success: true, messagesSent: sentCount });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
     console.error('Cron error:', error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: 'Cron failed' }, { status: 500 });
   }
 }
